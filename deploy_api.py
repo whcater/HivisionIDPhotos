@@ -19,6 +19,11 @@ import numpy as np
 import cv2
 from starlette.middleware.cors import CORSMiddleware
 from starlette.formparsers import MultiPartParser
+import logging
+
+# 设置日志级别
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # 设置Starlette表单字段大小限制
 MultiPartParser.max_part_size = 10 * 1024 * 1024  # 10MB
@@ -61,14 +66,37 @@ async def idphoto_inference(
     sharpen_strength: float = Form(0),
     saturation_strength: float = Form(0),
 ):  
+    # 增加输入验证和日志
+    logger.debug(f"input_image: {input_image is not None}, input_image_base64: {input_image_base64 is not None}")
+    if input_image is None and not input_image_base64:
+        logger.error("没有提供图像文件或base64编码的图像")
+        return {"status": False, "error": "必须提供图像文件或base64编码的图像"}
+        
     # 如果传入了base64，则直接使用base64解码
     if input_image_base64:
-        img = base64_2_numpy(input_image_base64)
+        logger.debug(f"Base64字符串长度: {len(input_image_base64)}")
+        try:
+            img = base64_2_numpy(input_image_base64)
+            logger.debug(f"解码后的图像: {img.shape if img is not None else None}")
+            if img is None:
+                logger.error("base64_2_numpy返回了None")
+                return {"status": False, "error": "Base64解码失败，请检查输入格式"}
+        except Exception as e:
+            logger.error(f"Base64解码错误: {str(e)}")
+            return {"status": False, "error": f"Base64解码错误: {str(e)}"}
     # 否则使用上传的图片
     else:
-        image_bytes = await input_image.read()
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        try:
+            image_bytes = await input_image.read()
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            logger.debug(f"上传图像解码后: {img.shape if img is not None else None}")
+            if img is None:
+                logger.error("图像文件解码失败")
+                return {"status": False, "error": "图像文件解码失败，请检查文件格式"}
+        except Exception as e:
+            logger.error(f"图像文件读取错误: {str(e)}")
+            return {"status": False, "error": f"图像文件读取错误: {str(e)}"}
 
     # ------------------- 选择抠图与人脸检测模型 -------------------
     choose_handler(creator, human_matting_model, face_detect_model)
@@ -76,6 +104,7 @@ async def idphoto_inference(
     # 将字符串转为元组
     size = (int(height), int(width))
     try:
+        logger.debug("开始调用creator处理图像")
         result = creator(
             img,
             size=size,
@@ -88,9 +117,14 @@ async def idphoto_inference(
             sharpen_strength=sharpen_strength,
             saturation_strength=saturation_strength,
         )
+        logger.debug("creator处理完成")
     except FaceError:
+        logger.error("人脸检测失败")
         result_message = {"status": False}
     # 如果检测到人脸数量等于1, 则返回标准证和高清照结果（png 4通道图像）
+    except Exception as e:
+        logger.error(f"处理图像时发生错误: {str(e)}")
+        return {"status": False, "error": f"处理图像时发生错误: {str(e)}"}
     else:
         result_image_standard_bytes = save_image_dpi_to_bytes(cv2.cvtColor(result.standard, cv2.COLOR_RGBA2BGRA), None, dpi)
         
@@ -103,6 +137,13 @@ async def idphoto_inference(
         if hd:
             result_image_hd_bytes = save_image_dpi_to_bytes(cv2.cvtColor(result.hd, cv2.COLOR_RGBA2BGRA), None, dpi)
             result_message["image_base64_hd"] = bytes_2_base64(result_image_hd_bytes)
+
+    # 在idphoto_inference函数中添加
+    if input_image_base64:
+        # 保存原始base64用于调试
+        with open("debug_base64.txt", "w") as f:
+            f.write(input_image_base64[:100] + "...\n")  # 保存前100个字符
+            f.write(f"Total length: {len(input_image_base64)}")
 
     return result_message
 

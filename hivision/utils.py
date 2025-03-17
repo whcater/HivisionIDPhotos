@@ -6,6 +6,7 @@ import numpy as np
 import cv2
 import base64
 from hivision.plugin.watermark import Watermarker, WatermarkerStyles
+import logging
 
 
 def save_image_dpi_to_bytes(image: np.ndarray, output_image_path: str = None, dpi: int = 300):
@@ -174,21 +175,64 @@ def numpy_2_base64(img: np.ndarray) -> str:
     return "data:image/png;base64," + base64_image
 
 
-def base64_2_numpy(base64_image: str) -> np.ndarray:
-    # Remove the data URL prefix if present
-    if base64_image.startswith('data:image'):
-        base64_image = base64_image.split(',')[1]
+def base64_2_numpy(base64_str):
+    # 添加日志跟踪问题
+    logging.debug(f"Base64字符串长度: {len(base64_str) if base64_str else 0}")
     
-    # Decode base64 string to bytes
-    img_bytes = base64.b64decode(base64_image)
-    
-    # Convert bytes to numpy array
-    img_array = np.frombuffer(img_bytes, dtype=np.uint8)
-    
-    # Decode the image array
-    img = cv2.imdecode(img_array, cv2.IMREAD_UNCHANGED)
-    
-    return img
+    try:
+        # 处理可能的 data URI 前缀
+        if base64_str.startswith('data:'):
+            # 提取实际的 base64 部分
+            base64_str = base64_str.split(',', 1)[1]
+        
+        # 解码 base64
+        img_data = base64.b64decode(base64_str)
+        logging.debug(f"Base64解码后数据大小: {len(img_data)} 字节")
+        # 保存为文件检查（可选）
+        try:
+            with open("output.jpg", "wb") as f:
+                f.write(img_data)
+        except Exception as e:
+            logging.error(f"output image错误: {str(e)}")
+         
+        # 尝试使用PIL解码，这通常更可靠
+        try:
+            from PIL import Image
+            import io
+            image = Image.open(io.BytesIO(img_data))
+            logging.debug(f"PIL成功解码图像: {image.size}, 模式: {image.mode}")
+            
+            # 转换为numpy数组并确保正确的通道顺序(RGB->BGR)
+            img_np = np.array(image)
+            if len(img_np.shape) == 3 and img_np.shape[2] == 3:
+                img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+            
+            return img_np
+        except Exception as pil_error:
+            logging.error(f"PIL解码失败: {str(pil_error)}，尝试OpenCV")
+            
+            # 如果PIL失败，仍尝试OpenCV
+            nparr = np.frombuffer(img_data, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            
+            if img is None:
+                # 尝试不同的解码标志
+                logging.debug("尝试使用不同的OpenCV解码标志")
+                img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
+            
+            if img is None:
+                logging.error("所有解码方法都失败")
+            else:
+                logging.debug(f"OpenCV成功解码图像: {img.shape}")
+                
+            return img
+    except Exception as e:
+        logging.error(f"Base64解码错误: {str(e)}")
+        # 在异常中打印前10个字符，帮助诊断
+        if base64_str:
+            prefix = base64_str[:min(10, len(base64_str))]
+            logging.error(f"Base64字符串前缀: {prefix}...")
+        return None
 
 # 字节流转base64
 def bytes_2_base64(img_byte_arr: bytes) -> str:

@@ -1,0 +1,17 @@
+# 基于已有镜像
+FROM byteheng/ai-biz-avatar:latest
+
+WORKDIR /app
+
+# 仅复制修改过的文件
+COPY deploy_api.py ./deploy_api.py
+COPY hivision/utils.py ./hivision/utils.py
+
+# 不需要重新安装依赖，直接使用已有镜像中的依赖
+
+# 暴露端口
+EXPOSE 7860
+EXPOSE 8080
+
+# 保持与原始镜像相同的启动命令
+CMD ["python3", "-u", "app.py", "--host", "0.0.0.0", "--port", "7860"] 
